@@ -81,6 +81,28 @@ src/
 └── index.ts          # CLI entry
 ```
 
+## 📚 Documentation
+
+Detailed documentation for each module:
+
+### Core Modules
+- [types.ts](docs/types.md) - Core type definitions (Message, Tool, Session, Config)
+- [config.ts](docs/config.md) - Configuration management and environment variables
+- [token.ts](docs/token.md) - Token calculation and context usage tracking
+- [storage.ts](docs/storage.md) - Session persistence with JSON storage
+- [tool.ts](docs/tool.md) - Tool system core (registration, execution)
+- [llm.ts](docs/llm.md) - LLM interaction layer with streaming responses
+- [session.ts](docs/session.md) - Session management and message processing
+- [index.ts](docs/index.md) - CLI entry and user interaction
+
+### Tool Modules
+- [tools/bash.ts](docs/tools-bash.md) - Bash command execution with safety checks
+- [tools/read.ts](docs/tools-read.md) - File reading with path traversal protection
+
+### Architecture
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Overall system architecture and design
+- [EXTENSION.md](EXTENSION.md) - Guide for adding new tools
+
 ## Extension
 
 See [EXTENSION.md](./EXTENSION.md) for how to add new tools.
