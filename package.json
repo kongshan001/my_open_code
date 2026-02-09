@@ -1,0 +1,26 @@
+{
+  "name": "hello_world_opencode",
+  "version": "0.1.0",
+  "description": "Minimal OpenCode implementation with GLM-4.7",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "npm run build && node dist/index.js"
+  },
+  "keywords": ["ai", "agent", "glm", "opencode"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ai": "^3.4.0",
+    "@ai-sdk/openai": "^0.0.70",
+    "zod": "^3.23.8",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0"
+  }
+}
