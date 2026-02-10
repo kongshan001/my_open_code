@@ -1,21 +1,26 @@
-import { SessionManager } from '../../src/session.js';
-import { getConfig } from '../../src/config.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { CompressionManager } from '../../src/compression.js';
 import { Message } from '../../src/types.js';
+import type { CompressionConfig } from '../../src/types.js';
 
-async function triggerCompressionTest() {
-  console.log('🚀 Triggering Compression with High Token Count\n');
+// Helper to create test messages
+function createMessage(role: 'user' | 'assistant' | 'tool', content: string, toolCalls?: any[], toolResults?: any[]): Message {
+  return {
+    id: `msg-${Date.now()}-${Math.random()}`,
+    role,
+    content,
+    timestamp: Date.now(),
+    toolCalls,
+    toolResults
+  };
+}
+
+// Create long content message
+function createLongMessage(index: number, role: 'user' | 'assistant', toolCalls?: any[], toolResults?: any[]): Message {
+  let content = '';
   
-  const config = getConfig();
-  const sessionManager = await SessionManager.create('High Token Test', config);
-  
-  console.log(`✓ Session created\n`);
-  
-  // Create messages with long content to reach the threshold faster
-  console.log('Generating messages with long content...\n');
-  
-  for (let i = 0; i < 150; i++) {
-    // User message with long content
-    const userContent = `I need help with task #${i + 1}. This is a complex problem that requires a comprehensive solution. 
+  if (role === 'user') {
+    content = `I need help with task #${index + 1}. This is a complex problem that requires a comprehensive solution.
 
 The requirements are:
 1. Implement a scalable architecture
@@ -27,25 +32,9 @@ The requirements are:
 7. Optimize for production use
 8. Make it maintainable for future developers
 
-Please provide detailed code examples, explanations, and best practices for each step. The solution should be production-ready and follow industry standards.
-
-Additional context: This will be used in a high-traffic environment with thousands of concurrent users, so performance and scalability are critical. We need to handle edge cases properly and implement proper monitoring and logging.
-
-The codebase currently uses modern JavaScript/TypeScript, React for the frontend, Node.js for the backend, and PostgreSQL for the database. We're using Docker for containerization and Kubernetes for orchestration.
-
-Please consider all these factors when providing your solution.`;
-    
-    const userMessage: Message = {
-      id: `user-${i}`,
-      role: 'user',
-      content: userContent,
-      timestamp: Date.now() - (150 - i) * 1000
-    };
-    
-    sessionManager.getSession().messages.push(userMessage);
-    
-    // Assistant message with code and explanations
-    const assistantContent = `I'll help you implement task #${i + 1} with a comprehensive solution.
+Please provide detailed code examples, explanations, and best practices for each step. The solution should be production-ready and follow industry standards.`;
+  } else {
+    content = `I'll help you implement task #${index + 1} with a comprehensive solution.
 
 ## Architecture Design
 
@@ -58,27 +47,6 @@ interface ServiceInterface {
   process(data: RequestData): Promise<ResponseData>;
   cleanup(): Promise<void>;
 }
-
-// Base implementation
-abstract class BaseService implements ServiceInterface {
-  protected logger: Logger;
-  protected metrics: MetricsCollector;
-  protected config: ServiceConfig;
-  
-  constructor(config: ServiceConfig) {
-    this.config = config;
-    this.logger = new Logger(this.constructor.name);
-    this.metrics = new MetricsCollector();
-  }
-  
-  abstract initialize(): Promise<void>;
-  abstract process(data: RequestData): Promise<ResponseData>;
-  
-  async cleanup(): Promise<void> {
-    await this.logger.flush();
-    await this.metrics.flush();
-  }
-}
 \`\`\`
 
 ## Implementation Details
@@ -87,251 +55,205 @@ abstract class BaseService implements ServiceInterface {
 
 \`\`\`typescript
 // Optimized data processing
-class DataProcessor extends BaseService {
-  private cache: LRUCache<string, ProcessedData>;
-  private queue: PriorityQueue<Task>;
-  
-  async initialize(): Promise<void> {
-    this.cache = new LRUCache({
-      max: 10000,
-      ttl: 1000 * 60 * 5 // 5 minutes
-    });
-    
-    this.queue = new PriorityQueue({
-      concurrency: 10,
-      timeout: 30000
-    });
-  }
+class DataProcessor implements ServiceInterface {
+  private cache: Map<string, any>;
   
   async process(data: RequestData): Promise<ResponseData> {
-    // Check cache first
-    const cacheKey = this.generateCacheKey(data);
-    const cached = this.cache.get(cacheKey);
-    if (cached) {
-      this.metrics.increment('cache_hit');
-      return cached;
-    }
+    const cached = this.cache.get(data.key);
+    if (cached) return cached;
     
-    // Process with error handling
-    try {
-      const result = await this.queue.add(() => 
-        this.processInternal(data)
-      );
-      
-      // Cache the result
-      this.cache.set(cacheKey, result);
-      this.metrics.increment('process_success');
-      
-      return result;
-    } catch (error) {
-      this.logger.error('Processing failed', error);
-      this.metrics.increment('process_error');
-      throw new ProcessingError(error.message);
-    }
-  }
-  
-  private async processInternal(data: RequestData): Promise<ResponseData> {
-    // Complex processing logic here
-    const processed = await this.transform(data);
-    const validated = await this.validate(processed);
-    const optimized = await this.optimize(validated);
-    
-    return optimized;
+    const result = await this.transform(data);
+    this.cache.set(data.key, result);
+    return result;
   }
 }
-\`\`\`
-
-### Error Handling Strategy
-
-\`\`\`typescript
-// Comprehensive error handling
-class ErrorHandler {
-  private circuitBreaker: CircuitBreaker;
-  private retryPolicy: RetryPolicy;
-  
-  async handle<T>(operation: () => Promise<T>): Promise<T> {
-    return this.circuitBreaker.execute(async () => {
-      return this.retryPolicy.execute(operation);
-    });
-  }
-  
-  private classifyError(error: Error): ErrorType {
-    if (error instanceof NetworkError) return ErrorType.TRANSIENT;
-    if (error instanceof ValidationError) return ErrorType.CLIENT;
-    return ErrorType.SERVER;
-  }
-}
-\`\`\`
-
-## Testing Strategy
-
-### Unit Tests
-
-\`\`\`typescript
-describe('DataProcessor', () => {
-  let processor: DataProcessor;
-  let mockConfig: ServiceConfig;
-  
-  beforeEach(async () => {
-    mockConfig = createMockConfig();
-    processor = new DataProcessor(mockConfig);
-    await processor.initialize();
-  });
-  
-  afterEach(async () => {
-    await processor.cleanup();
-  });
-  
-  it('should process data correctly', async () => {
-    const data = createMockRequestData();
-    const result = await processor.process(data);
-    
-    expect(result).toBeDefined();
-    expect(result.isValid).toBe(true);
-  });
-  
-  it('should handle cache correctly', async () => {
-    const data = createMockRequestData();
-    
-    // First call
-    const result1 = await processor.process(data);
-    
-    // Second call should use cache
-    const result2 = await processor.process(data);
-    
-    expect(result1).toEqual(result2);
-  });
-});
-\`\`\`
-
-### Integration Tests
-
-\`\`\`typescript
-describe('Service Integration', () => {
-  let app: Application;
-  let client: TestClient;
-  
-  beforeAll(async () => {
-    app = await createTestApp();
-    client = new TestClient(app);
-  });
-  
-  afterAll(async () => {
-    await app.close();
-  });
-  
-  it('should handle end-to-end flow', async () => {
-    const response = await client.post('/api/process', {
-      data: createTestData()
-    });
-    
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-  });
-});
-\`\`\`
-
-## Monitoring and Logging
-
-### Metrics Collection
-
-\`\`\`typescript
-// Custom metrics
-const requestDuration = new Histogram({
-  name: 'request_duration_seconds',
-  help: 'Duration of requests in seconds',
-  labelNames: ['method', 'route', 'status']
-});
-
-const errorRate = new Gauge({
-  name: 'error_rate',
-  help: 'Current error rate',
-  labelNames: ['service', 'error_type']
-});
-\`\`\`
-
-## Security Considerations
-
-1. Input validation and sanitization
-2. Rate limiting
-3. Authentication and authorization
-4. Data encryption
-5. Audit logging
-
-## Deployment Configuration
-
-\`\`\`yaml
-# Docker configuration
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY dist ./dist
-EXPOSE 3000
-CMD ["node", "dist/index.js"]
 \`\`\`
 
 This comprehensive solution addresses all your requirements for a production-ready, scalable system.`;
-    
-    const assistantMessage: Message = {
-      id: `assistant-${i}`,
-      role: 'assistant',
-      content: assistantContent,
-      timestamp: Date.now() - (150 - i) * 1000,
-      toolCalls: i % 3 === 0 ? [{
-        id: `tool-${i}`,
-        name: 'write',
-        args: {
-          filePath: `src/service${i}.ts`,
-          content: '// Service implementation'
-        }
-      }] : undefined,
-      toolResults: i % 3 === 0 ? [{
-        toolCallId: `tool-${i}`,
-        output: `File src/service${i}.ts created successfully with comprehensive implementation`
-      }] : undefined
-    };
-    
-    sessionManager.getSession().messages.push(assistantMessage);
-    
-    // Check compression more frequently with this dense content
-    if ((i + 1) % 10 === 0) {
-      console.log(`\n--- After ${i + 1} messages ---`);
-      console.log(sessionManager.formatContextStatus());
-      
-      const compressionResult = await sessionManager.checkAndPerformCompression();
-      if (compressionResult?.compressed) {
-        console.log(`📦 ${compressionResult.message}`);
-        console.log(`   Strategy: ${compressionResult.strategy}`);
-        console.log(`   Reduction: ${compressionResult.reductionPercentage}%`);
-        
-        if (compressionResult.summary) {
-          console.log(`   Summary: ${compressionResult.summary.substring(0, 150)}...`);
-        }
-      }
-    }
   }
   
-  // Final compression attempt
-  console.log('\n\n=== Final Compression Check ===');
-  const finalCompression = await sessionManager.checkAndPerformCompression();
-  if (finalCompression?.compressed) {
-    console.log(`✅ Final compression: ${finalCompression.message}\n`);
-  }
-  
-  // Show final state
-  console.log('=== Final State ===');
-  console.log(sessionManager.formatContextStatus());
-  
-  const lastCompression = sessionManager.getLastCompressionResult();
-  if (lastCompression?.compressed) {
-    console.log(`\nCompression Statistics:`);
-    console.log(`  Total compressions: Multiple`);
-    console.log(`  Last strategy: ${lastCompression.strategy}`);
-    console.log(`  Last reduction: ${lastCompression.reductionPercentage}%`);
-  }
-  
-  console.log('\n✅ High token compression test completed!');
+  return createMessage(role, content, toolCalls, toolResults);
 }
 
-triggerCompressionTest().catch(console.error);
+describe('Session Performance Tests', () => {
+  let compressionManager: CompressionManager;
+  const testConfig: CompressionConfig = {
+    enabled: true,
+    threshold: 75,
+    strategy: 'summary',
+    preserveToolHistory: true,
+    preserveRecentMessages: 10,
+    notifyBeforeCompression: false
+  };
+
+  beforeEach(() => {
+    compressionManager = new CompressionManager();
+  });
+
+  describe('Message Processing Performance', () => {
+    it('should process messages under load efficiently', async () => {
+      const messages: Message[] = [];
+      
+      // Create 50 pairs of messages
+      for (let i = 0; i < 50; i++) {
+        messages.push(createLongMessage(i, 'user'));
+        
+        if (i % 3 === 0) {
+          messages.push(
+            createLongMessage(
+              i,
+              'assistant',
+              [{ id: `tool-${i}`, name: 'write', args: { filePath: `src/service${i}.ts`, content: 'code' } }],
+              [{ toolCallId: `tool-${i}`, output: 'File created successfully' }]
+            )
+          );
+        } else {
+          messages.push(createLongMessage(i, 'assistant'));
+        }
+      }
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(duration).toBeLessThan(5000); // Should complete in <5s
+    });
+
+    it('should handle message processing under load', async () => {
+      const messages = Array.from({ length: 100 }, (_, i) =>
+        createMessage('user', `Test message ${i + 1}`)
+      );
+      
+      const startTime = Date.now();
+      await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(duration).toBeLessThan(3000);
+    });
+  });
+
+  describe('Compression Performance', () => {
+    it('should maintain performance with compression enabled', async () => {
+      const messages = Array.from({ length: 150 }, (_, i) =>
+        createMessage('user', `Performance test message ${i + 1}`)
+      );
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+      expect(duration).toBeLessThan(10000);
+    });
+
+    it('should perform compression efficiently with tool history', async () => {
+      const messages: Message[] = [];
+      
+      for (let i = 0; i < 50; i++) {
+        messages.push(createMessage('user', `Query ${i + 1}`));
+        
+        if (i % 3 === 0) {
+          messages.push(
+            createMessage(
+              'assistant',
+              `Response ${i + 1}`,
+              [{ id: `tool-${i}`, name: 'bash', args: { command: `test ${i}` } }],
+              [{ toolCallId: `tool-${i}`, output: `Output ${i}` }]
+            )
+          );
+        }
+      }
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(duration).toBeLessThan(5000);
+    });
+  });
+
+  describe('Throughput Performance', () => {
+    it('should maintain throughput under sustained load', async () => {
+      const messages = Array.from({ length: 200 }, (_, i) =>
+        createMessage('user', `Throughput test ${i + 1}`)
+      );
+      
+      const startTime = Date.now();
+      await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      // Should process at least 100 messages per second
+      const throughput = messages.length / (duration / 1000);
+      expect(throughput).toBeGreaterThan(100);
+    });
+
+    it('should handle concurrent compression requests', async () => {
+      const messages = Array.from({ length: 100 }, (_, i) =>
+        createMessage('user', `Concurrent test ${i + 1}`)
+      );
+      
+      const startTime = Date.now();
+      
+      // Run 5 concurrent compressions
+      const promises = Array.from({ length: 5 }, () =>
+        compressionManager.compress(messages, testConfig, 'tiny-test-model')
+      );
+      
+      const results = await Promise.all(promises);
+      const duration = Date.now() - startTime;
+      
+      results.forEach(result => {
+        expect(result.compressed).toBe(true);
+      });
+      
+      expect(duration).toBeLessThan(15000); // 5 concurrent ops in <15s
+    });
+  });
+
+  describe('Stress Tests', () => {
+    it('should maintain performance with mixed workloads', async () => {
+      const messages: Message[] = [];
+      
+      for (let i = 0; i < 100; i++) {
+        messages.push(createMessage('user', `Mixed test ${i + 1}`));
+        
+        if (i % 5 === 0) {
+          messages.push(createMessage('assistant', `Code response ${i + 1}`));
+        } else if (i % 3 === 0) {
+          messages.push(
+            createMessage(
+              'assistant',
+              `Tool response ${i + 1}`,
+              [{ id: `tool-mix-${i}`, name: 'bash', args: { command: `cmd${i}` } }],
+              [{ toolCallId: `tool-mix-${i}`, output: `Result ${i}` }]
+            )
+          );
+        }
+      }
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(duration).toBeLessThan(10000);
+    });
+
+    it('should handle very large message sets', async () => {
+      const messages = Array.from({ length: 500 }, (_, i) =>
+        createMessage('user', `Large set test ${i + 1}`)
+      );
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, testConfig, 'tiny-test-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+      expect(duration).toBeLessThan(20000);
+    });
+  });
+});

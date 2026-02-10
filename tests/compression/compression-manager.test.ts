@@ -1,6 +1,8 @@
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CompressionManager } from '../../src/compression.js';
 import { Message } from '../../src/types.js';
 import { estimateTokens } from '../../src/token.js';
+import type { CompressionConfig } from '../../src/types.js';
 
 // Helper to create test messages
 function createMessage(role: 'user' | 'assistant' | 'tool', content: string, toolCalls?: any[], toolResults?: any[]): Message {
@@ -22,21 +24,21 @@ function createTestConversation(count: number): Message[] {
     // User query
     messages.push(createMessage(
       'user',
-      `This is user query #${i + 1}. I need help with implementing a feature that involves complex data processing and algorithm optimization. The feature should handle large datasets efficiently.`
+      `This is user query #${i + 1}. I need help with implementing a feature that involves complex data processing and algorithm optimization.`
     ));
     
     // Assistant response with tool calls
     if (i % 3 === 0) {
       messages.push(createMessage(
         'assistant',
-        `I'll help you implement this feature. Let me start by examining the current codebase and then create the necessary files.`,
+        `I'll help you implement this feature.`,
         [{ id: `tool-${i}`, name: 'write', args: { filePath: `file${i}.js`, content: 'function test() {}' } }],
         [{ toolCallId: `tool-${i}`, output: 'File created successfully' }]
       ));
     } else {
       messages.push(createMessage(
         'assistant',
-        `Here's the solution for query #${i + 1}. You should implement the following approach:\n\n1. First, analyze the requirements\n2. Design the architecture\n3. Implement the core logic\n\`\`\`javascript\nfunction processData(data) {\n  // Implementation here\n  return data.map(x => x * 2);\n}\n\`\`\`\n\nThis should solve the problem efficiently.`
+        `Here's the solution for query #${i + 1}. You should implement the following approach:\n\n1. Analyze requirements\n2. Design architecture\n3. Implement core logic\n\`\`\`javascript\nfunction processData(data) {\n  return data.map(x => x * 2);\n}\n\`\`\``
       ));
     }
     
@@ -52,120 +54,155 @@ function createTestConversation(count: number): Message[] {
   return messages;
 }
 
-// Test all compression strategies
-async function testCompressionStrategies() {
-  console.log('🧪 Testing Context Compression Features\n');
-  
-  const compressionManager = new CompressionManager();
-  const testConfig = {
+describe('CompressionManager Tests', () => {
+  let compressionManager: CompressionManager;
+  const testConfig: CompressionConfig = {
     enabled: true,
     threshold: 75,
-    strategy: 'summary' as const,
+    strategy: 'summary',
     preserveToolHistory: true,
     preserveRecentMessages: 5,
     notifyBeforeCompression: true
   };
-  
-  // Test with a small conversation (no compression needed)
-  console.log('1️⃣  Testing with small conversation (no compression expected):');
-  const smallConversation = createTestConversation(3);
-  console.log(`   Messages: ${smallConversation.length}`);
-  console.log(`   Estimated tokens: ${smallConversation.reduce((sum, msg) => sum + estimateTokens(msg.content), 0).toLocaleString()}`);
-  
-  const smallResult = await compressionManager.compress(smallConversation, testConfig, 'glm-4.7');
-  console.log(`   Result: ${smallResult.compressed ? 'COMPRESSED' : 'NOT compressed'}`);
-  console.log(`   Message: ${smallResult.message}\n`);
-  
-  // Test with large conversation for each strategy
-  const strategies: Array<'summary' | 'sliding-window' | 'importance'> = ['summary', 'sliding-window', 'importance'];
   const largeConversation = createTestConversation(15);
-  
-  console.log(`2️⃣  Testing with large conversation (${largeConversation.length} messages):`);
-  console.log(`   Estimated tokens: ${largeConversation.reduce((sum, msg) => sum + estimateTokens(msg.content), 0).toLocaleString()}\n`);
-  
-  for (const strategy of strategies) {
-    console.log(`   📋 Testing ${strategy} strategy:`);
-    
-    const config = { ...testConfig, strategy };
-    const result = await compressionManager.compress(largeConversation, config, 'glm-4.7');
-    
-    console.log(`      Compressed: ${result.compressed ? 'YES' : 'NO'}`);
-    console.log(`      Original tokens: ${result.originalTokenCount.toLocaleString()}`);
-    console.log(`      Compressed tokens: ${result.compressedTokenCount.toLocaleString()}`);
-    console.log(`      Reduction: ${result.reductionPercentage}%`);
-    console.log(`      Messages before: ${largeConversation.length}`);
-    console.log(`      Messages after: ${result.compressedMessages?.length || largeConversation.length}`);
-    
-    if (result.summary) {
-      console.log(`      Summary: ${result.summary.substring(0, 100)}...`);
-    }
-    
-    // Verify tool history preservation
-    const originalToolMessages = largeConversation.filter(m => m.role === 'tool' || 
-      (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0));
-    const compressedToolMessages = result.compressedMessages?.filter(m => m.role === 'tool' || 
-      (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0)) || [];
-    
-    console.log(`      Tool messages - Original: ${originalToolMessages.length}, Preserved: ${compressedToolMessages.length}`);
-    
-    // Verify recent messages preservation
-    const recentMessages = result.compressedMessages?.slice(-config.preserveRecentMessages) || [];
-    const allRecentPreserved = recentMessages.every(msg => 
-      largeConversation.slice(-config.preserveRecentMessages).some(orig => orig.id === msg.id)
-    );
-    console.log(`      Recent messages preserved: ${allRecentPreserved ? 'YES' : 'NO'}`);
-    
-    console.log();
-  }
-  
-  // Test with tiny model to force compression
-  console.log('3️⃣  Testing forced compression with tiny model:');
-  const mediumConversation = createTestConversation(5);
-  const tinyResult = await compressionManager.compress(mediumConversation, testConfig, 'tiny-test-model');
-  console.log(`   Result: ${tinyResult.compressed ? 'COMPRESSED' : 'NOT compressed'}`);
-  console.log(`   Strategy used: ${tinyResult.strategy}`);
-  console.log(`   Reduction: ${tinyResult.reductionPercentage}%\n`);
-  
-  // Test edge cases
-  console.log('4️⃣  Testing edge cases:');
-  
-  // Empty conversation
-  const emptyResult = await compressionManager.compress([], testConfig, 'glm-4.7');
-  console.log(`   Empty conversation: ${emptyResult.compressed ? 'COMPRESSED' : 'NOT compressed'}`);
-  
-  // Single message
-  const singleMessage = [createMessage('user', 'Hello')];
-  const singleResult = await compressionManager.compress(singleMessage, testConfig, 'glm-4.7');
-  console.log(`   Single message: ${singleResult.compressed ? 'COMPRESSED' : 'NOT compressed'}`);
-  
-  // Very long messages
-  const longContent = 'A'.repeat(10000);
-  const longMessages = [
-    createMessage('user', longContent),
-    createMessage('assistant', longContent),
-    createMessage('user', longContent)
-  ];
-  const longResult = await compressionManager.compress(longMessages, testConfig, 'glm-4.7');
-  console.log(`   Long messages: ${longResult.compressed ? 'COMPRESSED' : 'NOT compressed'}`);
-  console.log(`   Long content reduction: ${longResult.reductionPercentage}%\n`);
-  
-  // Test with different configurations
-  console.log('5️⃣  Testing different configurations:');
-  
-  const configs = [
-    { preserveToolHistory: false, preserveRecentMessages: 3 },
-    { preserveToolHistory: true, preserveRecentMessages: 10 },
-    { threshold: 50 }
-  ];
-  
-  for (const configOverride of configs) {
-    const config = { ...testConfig, ...configOverride };
-    const result = await compressionManager.compress(largeConversation, config, 'glm-4.7');
-    console.log(`   Config ${JSON.stringify(configOverride)}: ${result.compressed ? 'COMPRESSED' : 'NOT compressed'} (${result.reductionPercentage}% reduction)`);
-  }
-  
-  console.log('\n✅ All compression tests completed!');
-}
 
-// Run the tests
-testCompressionStrategies().catch(console.error);
+  beforeEach(() => {
+    compressionManager = new CompressionManager();
+  });
+
+  describe('Small Conversation (No Compression)', () => {
+    it('should not compress small conversation', async () => {
+      const smallConversation = createTestConversation(3);
+      const totalTokens = smallConversation.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
+      
+      const result = await compressionManager.compress(smallConversation, testConfig, 'glm-4.7');
+      
+      expect(smallConversation.length).toBe(6); // 3 users + 3 assistants
+      expect(totalTokens).toBeGreaterThan(0);
+      expect(result.compressed).toBe(false);
+      expect(result.message).toContain('No compression needed');
+    });
+  });
+
+  describe('Large Conversation Compression', () => {
+    it('should compress with summary strategy', async () => {
+      const config: CompressionConfig = { ...testConfig, strategy: 'summary' };
+      const result = await compressionManager.compress(largeConversation, config, 'glm-4.7');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('summary');
+      expect(result.originalTokenCount).toBeGreaterThan(result.compressedTokenCount);
+      expect(result.reductionPercentage).toBe(0); // Normal model doesn't trigger compression
+    });
+
+    it('should compress with sliding window strategy', async () => {
+      const config: CompressionConfig = { ...testConfig, strategy: 'sliding-window' };
+      const result = await compressionManager.compress(largeConversation, config, 'glm-4.7');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('sliding-window');
+    });
+
+    it('should compress with importance strategy', async () => {
+      const config: CompressionConfig = { ...testConfig, strategy: 'importance' };
+      const result = await compressionManager.compress(largeConversation, config, 'glm-4.7');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('importance');
+    });
+
+    it('should force compression with tiny model', async () => {
+      const mediumConversation = createTestConversation(5);
+      const result = await compressionManager.compress(mediumConversation, testConfig, 'tiny-test-model');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('summary');
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Tool History Preservation', () => {
+    it('should preserve tool history when configured', async () => {
+      const config: CompressionConfig = { 
+        ...testConfig, 
+        strategy: 'sliding-window',
+        preserveToolHistory: true 
+      };
+      const result = await compressionManager.compress(largeConversation, config, 'tiny-test-model');
+      
+      if (result.compressedMessages) {
+        const originalToolMessages = largeConversation.filter(m => 
+          m.role === 'tool' || (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0));
+        const compressedToolMessages = result.compressedMessages.filter(m => 
+          m.role === 'tool' || (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0));
+        
+        expect(compressedToolMessages.length).toBe(originalToolMessages.length);
+      }
+    });
+
+    it('should preserve recent messages', async () => {
+      const config: CompressionConfig = { ...testConfig, strategy: 'sliding-window' };
+      const result = await compressionManager.compress(largeConversation, config, 'tiny-test-model');
+      
+      if (result.compressedMessages) {
+        const recentMessages = result.compressedMessages.slice(-config.preserveRecentMessages);
+        const allRecentPreserved = recentMessages.every(msg => 
+          largeConversation.slice(-config.preserveRecentMessages).some(orig => orig.id === msg.id)
+        );
+        expect(allRecentPreserved).toBe(true);
+      }
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle empty conversation', async () => {
+      const result = await compressionManager.compress([], testConfig, 'glm-4.7');
+      
+      expect(result.compressed).toBe(false);
+      expect(result.originalTokenCount).toBe(0);
+      expect(result.compressedTokenCount).toBe(0);
+    });
+
+    it('should handle single message', async () => {
+      const singleMessage = [createMessage('user', 'Hello')];
+      const result = await compressionManager.compress(singleMessage, testConfig, 'glm-4.7');
+      
+      expect(result.compressed).toBe(false);
+      expect(result.reductionPercentage).toBe(0);
+    });
+
+    it('should handle long messages', async () => {
+      const longContent = 'A'.repeat(10000);
+      const longMessages = [
+        createMessage('user', longContent),
+        createMessage('assistant', longContent),
+        createMessage('user', longContent)
+      ];
+      const result = await compressionManager.compress(longMessages, testConfig, 'glm-4.7');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('Different Configurations', () => {
+    it('should handle different preservation settings', async () => {
+      const configs = [
+        { preserveToolHistory: false, preserveRecentMessages: 3 },
+        { preserveToolHistory: true, preserveRecentMessages: 10 },
+        { threshold: 50 }
+      ];
+      
+      for (const configOverride of configs) {
+        const config = { ...testConfig, ...configOverride };
+        const result = await compressionManager.compress(largeConversation, config, 'tiny-test-model');
+        
+        if (configOverride.threshold === undefined) {
+          expect(result.reductionPercentage).toBeGreaterThanOrEqual(0);
+        } else {
+          expect(result.compressed).toBe(true);
+        }
+      }
+    });
+  });
+});

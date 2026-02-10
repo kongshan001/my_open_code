@@ -1,64 +1,30 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { CompressionManager } from '../../src/compression.js';
 import { createTestMessage } from '../helpers/factories.js';
+import type { CompressionConfig } from '../../src/types.js';
 
-describe('Integration Tests', () => {
-  describe('Compression Integration', () => {
-    it('should trigger compression at threshold', async () => {
-      const session = {
-        id: 'integration-test',
-        messages: [
-          createTestMessage({ content: 'Test message 1' }),
-          createTestMessage({ content: 'Test message 2' }),
-          createTestMessage({ content: 'Test message 3' }),
-          createTestMessage({ content: 'Test message 4' }),
-        ],
-        updatedAt: Date.now()
-      };
-      
-      // Import the implementation
-      const compression = (await import('../../src/compression.js')).CompressionManager;
-      
-      // Configure for testing
-      compression.configure({
-        threshold: 3, // Very low threshold for testing
-        strategy: 'summary'
-      });
-      
-      // Create mock session manager with compression
-      const { SessionManager } = await import('../../src/session.js');
-      
-      vi.mock('../../src/config.js').mockReturnValue({
-        apiKey: 'test-key',
-        model: 'glm-4.7',
-        workingDir: '/test',
-      });
-      
-      vi.mock('../../src/storage.js').mockResolvedValue(session);
-      
-      const sessionManager = new SessionManager(session, {
-        apiKey: 'test-key',
-        baseUrl: 'https://test.api.com',
-        model: 'glm-4.7',
-        workingDir: '/test',
-      });
-      
-      // Process a message to check if compression is triggered
-      await sessionManager.addUserMessage('This should trigger compression');
-      
-      // Verify compression was called
-      // In real implementation, this would result in the session being compressed
-      expect(sessionManager.getSession().messages.length).toBeGreaterThan(0);
-      expect(compression.shouldCompress).toHaveBeenCalled();
-    });
+describe('Compression Integration Tests', () => {
+  let compressionManager: CompressionManager;
+  const mockConfig: CompressionConfig = {
+    enabled: true,
+    threshold: 75,
+    strategy: 'summary',
+    preserveToolHistory: true,
+    preserveRecentMessages: 10,
+    notifyBeforeCompression: false
+  };
+
+  beforeEach(() => {
+    compressionManager = new CompressionManager();
   });
 
-  describe('Tool Execution Integration', () => {
+  describe('Tool History Preservation', () => {
     it('should preserve tool history during compression', async () => {
       const messages = [
         createTestMessage({ content: 'List files' }),
         createTestMessage({
           role: 'assistant',
-          content: 'I\\'ll list files.',
+          content: 'I\'ll list files.',
           toolCalls: [
             { id: 'tool-1', name: 'bash', arguments: { command: 'ls -la' } }
           ]
@@ -70,188 +36,180 @@ describe('Integration Tests', () => {
             { toolCallId: 'tool-1', name: 'bash', output: 'package.json' }
           ]
         }),
-        createTestMessage({ content: 'Continue working with the files' }),
+        createTestMessage({ content: 'Continue working with files' }),
       ];
-      
-      // Mock storage
-      const { SessionManager } = await import('../../src/session.js');
-      
-      vi.mock('../../src/config.js').mockReturnValue({
-        apiKey: 'test-key',
-        model: 'glm-4.7',
-        workingDir: '/test',
-      });
-      
-      vi.mock('../../src/storage.js').mockResolvedValue({
-        id: 'tool-integration-test',
-        messages,
-        updatedAt: Date.now()
-      });
-      
-      const sessionManager = new SessionManager(
-        {
-          id: 'tool-integration-test',
-          messages,
-          updatedAt: Date.now()
-        },
-        {
-          apiKey: 'test-key',
-          baseUrl: 'https://test.api.com',
-          model: 'glm-4.7',
-          workingDir: '/test',
-        }
-      );
-      
-      // Trigger compression
-      const compression = (await import('../../src/compression.js')).CompressionManager;
-      compression.configure({
-        threshold: 2, // Low threshold
+
+      const config: CompressionConfig = {
+        ...mockConfig,
         strategy: 'sliding-window',
-        windowSize: 10,
-        preserveToolHistory: true,
-      });
-      
-      // Process a message to trigger compression
-      await sessionManager.addUserMessage('This should compress with tool history preserved');
-      
-      const updatedSession = sessionManager.getSession();
-      
-      // Verify tool history is preserved
-      const hasToolCall = updatedSession.messages.some(msg => 
-        msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0
-      );
-      expect(hasToolCall).toBe(true);
-      
-      // Verify tool result is preserved
-      const hasToolResult = updatedSession.messages.some(msg => 
-        msg.role === 'tool' && msg.toolResults && msg.toolResults.length > 0
-      );
-      expect(hasToolResult).toBe(true);
+        preserveRecentMessages: 2,
+        preserveToolHistory: true
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+
+      if (result.compressedMessages) {
+        const hasToolCall = result.compressedMessages.some(msg =>
+          msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0
+        );
+        expect(hasToolCall).toBe(true);
+
+        const hasToolResult = result.compressedMessages.some(msg =>
+          msg.role === 'tool' && msg.toolResults && msg.toolResults.length > 0
+        );
+        expect(hasToolResult).toBe(true);
+      }
+    });
+
+    it('should preserve recent messages when configured', async () => {
+      const messages = [
+        createTestMessage({ content: 'Old message 1' }),
+        createTestMessage({ content: 'Old message 2' }),
+        createTestMessage({ content: 'Old message 3' }),
+        createTestMessage({ content: 'Recent message 1' }),
+        createTestMessage({ content: 'Recent message 2' }),
+      ];
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'sliding-window',
+        preserveRecentMessages: 2,
+        preserveToolHistory: false
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+
+      if (result.compressedMessages) {
+        expect(result.compressedMessages.length).toBe(2);
+        expect(result.compressedMessages[0].content).toBe('Recent message 1');
+        expect(result.compressedMessages[1].content).toBe('Recent message 2');
+      }
     });
   });
 
-  describe('Rollback Capability', () => {
-    it('should allow rollback of compression', async () => {
-      const originalMessages = [
-        createTestMessage({ content: 'Important message 1' }),
-        createTestMessage({ content: 'Important message 2' }),
-        createTestMessage({ content: 'Important message 3' }),
-      ];
-      
-      const compressedMessages = [
-        createTestMessage({ role: 'system', content: 'Compressed conversation summary' }),
-        createTestMessage({ content: 'Important message 1' }),
-        createTestMessage({ content: 'Important message 2' }),
-      ];
-      
-      // Mock storage with two versions
-      const { SessionManager } = await import('../../src/session.js');
-      
-      vi.mock('../../src/config.js').mockReturnValue({
-        apiKey: 'test-key',
-        model: 'glm-4.7',
-        workingDir: '/test',
-      });
-      
-      vi.mock('../../src/storage.js')
-        .mockResolvedValueOnce({
-          id: 'rollback-test',
-          messages: originalMessages,
-          updatedAt: Date.now()
-        })
-        .mockResolvedValueOnce({
-          id: 'rollback-test',
-          messages: compressedMessages,
-          updatedAt: Date.now()
-        });
-        .mockResolvedValueOnce({
-          id: 'rollback-test',
-          messages: compressedMessages,
-          updatedAt: Date.now(),
-          metadata: {
-            compression: {
-              originalCount: originalMessages.length,
-              compressedCount: compressedMessages.length,
-              strategy: 'summary'
-            }
-          }
-        });
-      
-      const sessionManager = new SessionManager(
-        {
-          id: 'rollback-test',
-          messages: compressedMessages,
-          updatedAt: Date.now(),
-          metadata: {
-            compression: {
-              originalCount: originalMessages.length,
-              compressedCount: compressedMessages.length,
-              strategy: 'summary'
-            }
-          }
-        },
-        {
-          apiKey: 'test-key',
-          baseUrl: 'https://test.api.com',
-          model: 'glm-4.7',
-          workingDir: '/test',
-        }
+  describe('Different Compression Strategies', () => {
+    it('should use summary strategy', async () => {
+      const messages = Array.from({ length: 50 }, (_, i) =>
+        createTestMessage({ content: `Message ${i + 1}` })
       );
-      
-      // Test rollback
-      const { CompressionManager } = await import('../../src/compression.js');
-      compression.rollback('rollback-test');
-      
-      const rolledBackSession = vi.mocked(mockStorage.loadSession).mockCalls[2][0];
-      
-      expect(rolledBackSession.messages).toEqual(originalMessages);
-      expect(rolledBackSession.metadata?.compression).toBeUndefined();
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'summary'
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('summary');
+      expect(result.summary).toBeDefined();
+    });
+
+    it('should use sliding window strategy', async () => {
+      const messages = Array.from({ length: 50 }, (_, i) =>
+        createTestMessage({ content: `Message ${i + 1}` })
+      );
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'sliding-window',
+        preserveRecentMessages: 10
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('sliding-window');
+    });
+
+    it('should use importance strategy', async () => {
+      const messages = [
+        createTestMessage({ role: 'user', content: 'Important task with code' }),
+        createTestMessage({ role: 'assistant', content: '```const x = 1;```' }),
+        createTestMessage({ role: 'user', content: 'Another message' }),
+        createTestMessage({ role: 'assistant', content: 'Regular response' }),
+      ];
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'importance',
+        preserveRecentMessages: 2
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('importance');
     });
   });
 
-  describe('Error Handling', () => {
-    it('should handle compression errors gracefully', async () => {
-      const { SessionManager } = await import('../../src/session.js');
-      
-      vi.mock('../../src/config.js').mockReturnValue({
-        apiKey: 'test-key',
-        model: 'glm-4.7',
-        workingDir: '/test',
-      });
-      
-      vi.mock('../../src/storage.js').mockResolvedValue({
-        id: 'error-test',
-        messages: [createTestMessage({ content: 'test' })],
-        updatedAt: Date.now()
-      });
-      
-      const sessionManager = new SessionManager(
-        {
-          id: 'error-test',
-          messages: [createTestMessage({ content: 'test' })],
-          updatedAt: Date.now()
-        },
-        {
-          apiKey: 'test-key',
-          baseUrl: 'https://test.api.com',
-          model: 'glm-4.7',
-          workingDir: '/test',
-        }
-      );
-      
-      const compression = (await import('../../src/compression.js')).CompressionManager;
-      
-      // Mock storage error during compression
-      vi.mock('../../src/storage.js').mockRejectedValueOnce(new Error('Storage error'));
-      
-      const result = await compression.compress('error-test');
-      
-      // Should handle error gracefully
+  describe('Edge Cases', () => {
+    it('should handle empty conversation', async () => {
+      const messages: any[] = [];
+
+      const result = await compressionManager.compress(messages, mockConfig, 'glm-4.7');
+
       expect(result.compressed).toBe(false);
-      
-      // Session should remain unchanged
-      const sessionAfterError = sessionManager.getSession();
-      expect(sessionAfterError.messages).toEqual([createTestMessage({ content: 'test' })]);
+      expect(result.originalTokenCount).toBe(0);
+      expect(result.compressedTokenCount).toBe(0);
+    });
+
+    it('should handle single message', async () => {
+      const messages = [createTestMessage({ content: 'Single message' })];
+
+      const result = await compressionManager.compress(messages, mockConfig, 'glm-4.7');
+
+      expect(result.compressed).toBe(false);
+      expect(result.originalTokenCount).toBeGreaterThan(0);
+    });
+
+    it('should handle conversation with only user messages', async () => {
+      const messages = Array.from({ length: 100 }, (_, i) =>
+        createTestMessage({ role: 'user', content: `User message ${i + 1}` })
+      );
+
+      const result = await compressionManager.compress(messages, mockConfig, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Compression Thresholds', () => {
+    it('should respect custom threshold', async () => {
+      const messages = Array.from({ length: 50 }, (_, i) =>
+        createTestMessage({ content: `Message ${i + 1}` })
+      );
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        threshold: 50
+      };
+
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+    });
+
+    it('should not compress when below threshold', async () => {
+      const messages = Array.from({ length: 5 }, (_, i) =>
+        createTestMessage({ content: `Message ${i + 1}` })
+      );
+
+      const config: CompressionConfig = {
+        ...mockConfig,
+        threshold: 90
+      };
+
+      const result = await compressionManager.compress(messages, config, 'glm-4.7');
+
+      expect(result.compressed).toBe(false);
+      expect(result.message).toContain('No compression needed');
     });
   });
 });

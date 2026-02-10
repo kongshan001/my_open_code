@@ -1,171 +1,181 @@
-import { describe, it, expect, vi } from 'vitest';
-import { formatContextUsage, calculateContextUsage, ContextUsage } from '../../src/token.js';
-import { getConfig } from '../../src/config.js';
-import { SessionManager } from '../../src/session.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { CompressionManager } from '../../src/compression.js';
+import { createTestMessage, createLongConversation } from '../helpers/factories.js';
+import type { CompressionConfig } from '../../src/types.js';
 
-// Mock config and storage
-vi.mock('../../src/config.js');
-const mockConfig = {
-  apiKey: 'test-key',
-  baseUrl: 'https://test.api.com',
-  model: 'glm-4.7',
-  workingDir: '/test',
-};
+describe('Compression Performance Tests', () => {
+  let compressionManager: CompressionManager;
+  const mockConfig: CompressionConfig = {
+    enabled: true,
+    threshold: 75,
+    strategy: 'summary',
+    preserveToolHistory: true,
+    preserveRecentMessages: 10,
+    notifyBeforeCompression: false
+  };
 
-vi.mocked(getConfig).mockReturnValue(mockConfig);
+  beforeEach(() => {
+    compressionManager = new CompressionManager();
+  });
 
-const mockStorage = {
-  sessions: new Map(),
-  saveSession: vi.fn().mockResolvedValue(),
-  loadSession: vi.fn().mockResolvedValue(null),
-};
-
-describe('Compression System Performance', () => {
   describe('Token Efficiency', () => {
     it('should reduce token usage significantly', async () => {
-      const baseSession = {
-        id: 'base',
-        messages: Array(100).fill(null).map((_, i) => ({
-          role: 'user' as const,
-          content: `Message ${i}`
-        }))
-      };
+      const messages = createLongConversation(100);
       
-      vi.mocked(mockStorage.loadSession).mockResolvedValue(baseSession);
-      
-      const sessionManager = new SessionManager(baseSession, mockConfig);
-      
-      // Test without compression
-      const usageWithout = sessionManager.getContextUsage();
-      
-      // Simulate compression
-      const compression = new (await import('../../src/compression.js')).CompressionManager(mockConfig, mockStorage);
-      await compression.compress(baseSession.id);
-      
-      vi.mocked(mockStorage.loadSession).mockResolvedValue({
-        ...baseSession,
-        messages: baseSession.messages.slice(0, 20) // Simulated compressed messages
-      });
-      
-      const sessionWithCompression = new SessionManager(
-        vi.mocked(mockStorage.loadSession)({
-          ...baseSession,
-          id: baseSession.id,
-          messages: baseSession.messages.slice(0, 20),
-          updatedAt: Date.now()
-        }),
-        mockConfig
-      );
-      
-      const usageWith = sessionWithCompression.getContextUsage();
-      
-      expect(usageWithout.totalTokens).toBeGreaterThan(usageWith.totalTokens * 1.5);
-      expect(usageWith.usagePercentage).toBeLessThan(usageWithout.usagePercentage / 2);
-    });
-
-    it('should maintain conversation coherence', async () => {
-      const messages = [
-        { role: 'user', content: 'I\\'m working on a React project' },
-        { role: 'assistant', content: 'That\\'s great!' },
-        { role: 'user', content: 'Can you help me with components?' },
-        { role: 'assistant', content: 'Sure! I\\'ll help you with React components' },
-        { role: 'user', content: 'Let\\'s create a Button component' },
-      ];
-      
-      const session = {
-        id: 'coherence-test',
-        messages,
-        updatedAt: Date.now()
-      };
-      
-      vi.mocked(mockStorage.loadSession).mockResolvedValue(session);
-      
-      const compression = new (await import('../../src/compression.js')).CompressionManager(mockConfig, mockStorage);
-      compression.configure({ strategy: 'importance-based' });
-      
-      const result = await compression.compress(session.id);
+      const result = await compressionManager.compress(messages, mockConfig, 'tiny-model');
       
       expect(result.compressed).toBe(true);
-      expect(result.compressedMessageCount).toBeGreaterThan(0);
-      expect(result.compressedMessageCount).toBeLessThan(messages.length);
+      expect(result.originalTokenCount).toBeGreaterThan(0);
+      expect(result.compressedTokenCount).toBeLessThan(result.originalTokenCount);
+      expect(result.reductionPercentage).toBeGreaterThan(50); // At least 50% reduction
+    });
+
+    it('should maintain reasonable compression ratio', async () => {
+      const messages = createLongConversation(50);
       
-      // Check coherence by checking important keywords are preserved
-      vi.mocked(mockStorage.loadSession).mockResolvedValue({
-        ...session,
-        messages: expect.arrayContaining(
-          expect.objectContaining({ content: expect.stringContaining('React') })
-        )
-      });
+      const result = await compressionManager.compress(messages, mockConfig, 'tiny-model');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+      expect(result.reductionPercentage).toBeLessThan(100);
+    });
+  });
+
+  describe('Performance Metrics', () => {
+    it('should complete compression in reasonable time', async () => {
+      const messages = createLongConversation(100);
+      
+      const startTime = Date.now();
+      await compressionManager.compress(messages, mockConfig, 'glm-4.7');
+      const duration = Date.now() - startTime;
+      
+      expect(duration).toBeLessThan(5000); // Should complete in <5s
+    });
+
+    it('should scale linearly with message count', async () => {
+      const smallMessages = createLongConversation(50);
+      const largeMessages = createLongConversation(200);
+      
+      const smallStart = Date.now();
+      await compressionManager.compress(smallMessages, mockConfig, 'tiny-model');
+      const smallDuration = Date.now() - smallStart;
+      
+      const largeStart = Date.now();
+      await compressionManager.compress(largeMessages, mockConfig, 'tiny-model');
+      const largeDuration = Date.now() - largeStart;
+      
+      // Large should be at most 5x slower than small (not exponential)
+      expect(largeDuration).toBeLessThan(smallDuration * 5);
     });
   });
 
   describe('Large Conversation Handling', () => {
     it('should handle very large conversations efficiently', async () => {
-      // Test with extremely large message count
-      const largeMessages = Array(500).fill(null).map((_, i) => ({
-        role: 'user' as const,
-        content: `Large message ${i}`
-      }));
-      
-      const session = {
-        id: 'large-test',
-        messages: largeMessages,
-        updatedAt: Date.now()
-      };
-      
-      vi.mocked(mockStorage.loadSession).mockResolvedValue(session);
-      
-      const compression = new (await import('../../src/compression.js')).CompressionManager(mockConfig, mockStorage);
+      const largeMessages = createLongConversation(500);
       
       const startTime = Date.now();
-      const result = await compression.compress(session.id);
-      const endTime = Date.now();
-      
-      const duration = endTime - startTime;
+      const result = await compressionManager.compress(largeMessages, mockConfig, 'tiny-model');
+      const duration = Date.now() - startTime;
       
       expect(result.compressed).toBe(true);
-      expect(result.compressedMessageCount).toBeLessThan(largeMessages.length);
-      
-      // Should complete in reasonable time
       expect(duration).toBeLessThan(10000); // 10s for large operation
+      expect(result.reductionPercentage).toBeGreaterThan(50);
+    });
+
+    it('should handle long messages efficiently', async () => {
+      const longMessages = Array.from({ length: 50 }, (_, i) =>
+        createTestMessage({
+          content: `This is a very long message ${i + 1}. `.repeat(50)
+        })
+      );
       
-      // Verify effective compression
-      const effectiveReduction = (largeMessages.length - result.compressedMessageCount) / largeMessages.length;
-      expect(effectiveReduction).toBeGreaterThan(0.5); // At least 50% reduction
+      const result = await compressionManager.compress(longMessages, mockConfig, 'tiny-model');
+      
+      expect(result.compressed).toBe(true);
+      expect(result.originalTokenCount).toBeGreaterThan(0);
+      expect(result.reductionPercentage).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Different Strategies Performance', () => {
+    it('should perform well with summary strategy', async () => {
+      const messages = createLongConversation(100);
+      const config: CompressionConfig = { ...mockConfig, strategy: 'summary' };
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('summary');
+      expect(duration).toBeLessThan(3000);
+    });
+
+    it('should perform well with sliding window strategy', async () => {
+      const messages = createLongConversation(100);
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'sliding-window',
+        preserveRecentMessages: 20
+      };
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('sliding-window');
+      expect(duration).toBeLessThan(3000);
+    });
+
+    it('should perform well with importance strategy', async () => {
+      const messages = createLongConversation(100);
+      const config: CompressionConfig = {
+        ...mockConfig,
+        strategy: 'importance',
+        preserveRecentMessages: 20
+      };
+      
+      const startTime = Date.now();
+      const result = await compressionManager.compress(messages, config, 'tiny-model');
+      const duration = Date.now() - startTime;
+      
+      expect(result.compressed).toBe(true);
+      expect(result.strategy).toBe('importance');
+      expect(duration).toBeLessThan(3000);
     });
   });
 
   describe('Memory Management', () => {
     it('should prevent memory leaks with repeated compressions', async () => {
-      const messages = Array(200).fill(null).map((_, i) => ({
-        role: 'user' as const,
-        content: `Test message ${i}`
-      }));
-      
-      const session = {
-        id: 'memory-test',
-        messages,
-        updatedAt: Date.now()
-      };
-      
-      vi.mocked(mockStorage.loadSession).mockResolvedValue(session);
-      
-      const compression = new (await import('../../src/compression.js')).CompressionManager(mockConfig, mockStorage);
+      const messages = createLongConversation(100);
       
       // Run multiple compressions
       for (let i = 0; i < 5; i++) {
-        await compression.compress(session.id);
+        await compressionManager.compress(messages, mockConfig, 'tiny-model');
       }
       
-      // Verify compression remains effective
-      const finalSession = vi.mocked(mockStorage.loadSession).mockResolvedValue({
-        ...session,
-        messages: session.messages.slice(0, 40) // Should stabilize at window size
+      // Verify compression remains effective (should not degrade)
+      const finalResult = await compressionManager.compress(messages, mockConfig, 'tiny-model');
+      expect(finalResult.compressed).toBe(true);
+      expect(finalResult.reductionPercentage).toBeGreaterThan(0);
+    });
+
+    it('should handle concurrent compressions gracefully', async () => {
+      const messages = createLongConversation(100);
+      
+      // Run compressions concurrently
+      const promises = Array.from({ length: 5 }, () =>
+        compressionManager.compress(messages, mockConfig, 'tiny-model')
+      );
+      
+      const results = await Promise.all(promises);
+      
+      // All should complete successfully
+      results.forEach(result => {
+        expect(result.compressed).toBe(true);
+        expect(result.reductionPercentage).toBeGreaterThan(0);
       });
-      
-      const finalUsage = calculateContextUsage(finalSession.messages, mockConfig.model);
-      
-      expect(finalUsage.totalTokens).toBeLessThan(calculateContextUsage(session.messages, mockConfig.model).totalTokens * 0.5);
     });
   });
 });

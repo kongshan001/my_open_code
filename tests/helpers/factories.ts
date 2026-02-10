@@ -1,7 +1,8 @@
+import { vi } from 'vitest';
 import { Message, Config, Session, Tool, ToolContext } from '../../src/types.js'
 
 /**
- * Test utilities and helpers for the hello_world project
+ * Test utilities and helpers for hello_world project
  */
 
 // UUID generator for tests
@@ -127,6 +128,15 @@ export function createTestTool(overrides: Partial<Tool> = {}): Tool {
     execute: vi.fn().mockResolvedValue({ output: 'Tool executed successfully' }),
     ...overrides
   }
+}
+
+// Create a valid Zod schema for testing
+export function createTestToolSchema() {
+  const { z } = require('zod');
+  return z.object({
+    action: z.string().optional(),
+    data: z.any().optional()
+  });
 }
 
 // Message collection factories for different test scenarios
