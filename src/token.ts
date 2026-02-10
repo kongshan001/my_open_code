@@ -28,6 +28,10 @@ export const MODEL_LIMITS: Record<string, ModelLimits> = {
     context: 128000,
     output: 4096,
   },
+  'glm-tiny': {
+    context: 1000,  // 1K 上下文 for testing
+    output: 256,     // 256 输出
+  },
   'default': {
     context: 8192,
     output: 4096,
@@ -95,7 +99,7 @@ export function calculateContextUsage(
 }
 
 // 格式化显示
-export function formatContextUsage(usage: ContextUsage): string {
+export function formatContextUsage(usage: ContextUsage, isCompressed = false): string {
   const { usagePercentage, totalTokens, contextLimit, remainingTokens } = usage;
   
   // 根据使用率选择颜色/表情
@@ -111,7 +115,10 @@ export function formatContextUsage(usage: ContextUsage): string {
     status = ' [⚠️  Near Limit]';
   }
   
-  return `${indicator} Context: ${usagePercentage}% (${totalTokens.toLocaleString()}/${contextLimit.toLocaleString()}) | Remaining: ${remainingTokens.toLocaleString()}${status}`;
+  // 如果已压缩，添加压缩指示器
+  const compressionIndicator = isCompressed ? ' 📦' : '';
+  
+  return `${indicator}${compressionIndicator} Context: ${usagePercentage}% (${totalTokens.toLocaleString()}/${contextLimit.toLocaleString()}) | Remaining: ${remainingTokens.toLocaleString()}${status}`;
 }
 
 // 获取警告消息

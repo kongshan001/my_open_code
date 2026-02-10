@@ -1,14 +1,16 @@
-import { Session, Message, Config } from './types.js';
+import { Session, Message, Config, CompressionResult } from './types.js';
 import { saveSession, loadSession, generateId } from './storage.js';
 import { streamChat, LLMResponse } from './llm.js';
 import { getSystemPrompt } from './system-prompt.js';
 import { executeTool } from './tool.js';
 import { calculateContextUsage, formatContextUsage, getContextWarning, ContextUsage } from './token.js';
+import { CompressionManager } from './compression.js';
 import type { CoreMessage } from 'ai';
 
 export class SessionManager {
   private session: Session;
   private config: Config;
+  private compressionManager = new CompressionManager();
 
   constructor(session: Session, config: Config) {
     this.session = session;
@@ -21,15 +23,68 @@ export class SessionManager {
   }
 
   // 格式化显示上下文使用率
-  formatContextStatus(): string {
+  formatContextStatus(isCompressed = false): string {
     const usage = this.getContextUsage();
-    return formatContextUsage(usage);
+    return formatContextUsage(usage, isCompressed);
   }
 
   // 检查是否需要警告
   checkContextWarning(): string | null {
     const usage = this.getContextUsage();
     return getContextWarning(usage);
+  }
+
+  // 检查并执行压缩
+  async checkAndPerformCompression(): Promise<CompressionResult | null> {
+    if (!this.config.compression?.enabled) {
+      return null;
+    }
+
+    const usage = this.getContextUsage();
+    
+    // 如果使用率超过阈值，执行压缩
+    if (usage.usagePercentage >= this.config.compression.threshold) {
+      const compressionResult = await this.compressionManager.compress(
+        this.session.messages,
+        this.config.compression,
+        this.config.model
+      );
+      
+      if (compressionResult.compressed) {
+        // 通知用户（如果配置了）
+        if (this.config.compression.notifyBeforeCompression) {
+          console.log(`\n🔧 Context compression triggered: ${compressionResult.message}`);
+          console.log(`   Strategy: ${compressionResult.strategy}`);
+          console.log(`   Reduction: ${compressionResult.reductionPercentage}% (${compressionResult.originalTokenCount.toLocaleString()} → ${compressionResult.compressedTokenCount.toLocaleString()} tokens)\n`);
+          
+          // 显示摘要（如果有的话）
+          if (compressionResult.summary) {
+            console.log(`   ${compressionResult.summary}\n`);
+          }
+        }
+        
+        // 应用压缩结果
+        if (compressionResult.compressedMessages) {
+          this.session.messages = compressionResult.compressedMessages;
+        }
+        
+        // 保存压缩结果到会话元数据
+        this.session.lastCompression = compressionResult;
+        
+        // 保存压缩后的会话
+        this.session.updatedAt = Date.now();
+        await saveSession(this.session);
+      }
+      
+      return compressionResult;
+    }
+    
+    return null;
+  }
+
+  // 获取最近的压缩结果
+  getLastCompressionResult(): CompressionResult | null {
+    return this.session.lastCompression || null;
   }
 
   static async create(title: string, config: Config): Promise<SessionManager> {
@@ -67,6 +122,9 @@ export class SessionManager {
   }
 
   async processMessage(): Promise<void> {
+    // 检查并执行压缩（在处理消息之前）
+    await this.checkAndPerformCompression();
+    
     // 转换消息为 CoreMessage 格式
     const coreMessages: CoreMessage[] = this.session.messages.map(msg => ({
       role: msg.role === 'tool' ? 'assistant' : msg.role,

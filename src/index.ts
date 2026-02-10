@@ -112,10 +112,16 @@ async function main() {
     // 显示当前上下文使用率
     const contextStatus = sessionManager.formatContextStatus();
     console.log(`${contextStatus}\n`);
+    
+    // 显示压缩配置状态（如果启用）
+    const configStatus = getConfig();
+    if (configStatus.compression?.enabled) {
+      console.log(`📦 Compression: Enabled (Strategy: ${configStatus.compression.strategy}, Threshold: ${configStatus.compression.threshold}%)\n`);
+    }
 
     // 交互式对话循环
     console.log('💬 Interactive Mode');
-    console.log('Commands: "exit" or "quit" to exit, "/history" to view history, "/clear" to clear screen\n');
+    console.log('Commands: "exit" or "quit" to exit, "/history" to view history, "/clear" to clear screen, "/compress" to trigger compression\n');
     console.log(`Working directory: ${config.workingDir}\n`);
 
     while (true) {
@@ -153,7 +159,14 @@ async function main() {
           
           // 显示上下文使用率
           const usage = sessionManager.getContextUsage();
-          console.log(`Context: ${usage.usagePercentage}% (${usage.totalTokens.toLocaleString()}/${usage.contextLimit.toLocaleString()} tokens) | Input: ${usage.inputTokens.toLocaleString()} | Output: ${usage.outputTokens.toLocaleString()}`);
+          const lastCompression = sessionManager.getLastCompressionResult();
+          const compressionStatus = lastCompression?.compressed ? ' (compressed)' : '';
+          console.log(`Context: ${usage.usagePercentage}% (${usage.totalTokens.toLocaleString()}/${usage.contextLimit.toLocaleString()} tokens) | Input: ${usage.inputTokens.toLocaleString()} | Output: ${usage.outputTokens.toLocaleString()}${compressionStatus}`);
+          
+          // 显示压缩信息（如果有的话）
+          if (lastCompression?.compressed) {
+            console.log(`Last compression: ${lastCompression.strategy} strategy, ${lastCompression.reductionPercentage}% reduction (${lastCompression.originalTokenCount.toLocaleString()} → ${lastCompression.compressedTokenCount.toLocaleString()} tokens)`);
+          }
           
           console.log(`═══════════════════════════════════════════════════════════\n`);
         }
@@ -163,7 +176,31 @@ async function main() {
       if (input.toLowerCase() === '/clear') {
         console.clear();
         console.log('💬 Interactive Mode');
-        console.log('Type "exit" or "quit" to exit, "/history" to view history\n');
+        console.log('Commands: "exit" or "quit" to exit, "/history" to view history, "/clear" to clear screen, "/compress" to trigger compression\n');
+        continue;
+      }
+
+      if (input.toLowerCase() === '/compress') {
+        console.log('\n🔧 Manually triggering context compression...\n');
+        
+        const currentConfig = getConfig();
+        if (!currentConfig.compression?.enabled) {
+          console.log('❌ Compression is disabled in configuration. Enable it by setting COMPRESSION_ENABLED=true in your environment or .env file.\n');
+          continue;
+        }
+        
+        const compressionResult = await sessionManager.checkAndPerformCompression();
+        
+        if (compressionResult?.compressed) {
+          console.log(`✅ ${compressionResult.message}\n`);
+        } else if (compressionResult) {
+          console.log(`ℹ️  ${compressionResult.message}\n`);
+        } else {
+          console.log('ℹ️  No compression performed.\n');
+        }
+        
+        // 显示更新后的上下文使用率
+        console.log(`${sessionManager.formatContextStatus(!!compressionResult?.compressed)}\n`);
         continue;
       }
 
@@ -181,12 +218,20 @@ async function main() {
         // 添加用户消息
         await sessionManager.addUserMessage(input);
 
-        // 处理消息
+        // 处理消息（压缩会在内部自动触发）
         console.log('\nAssistant: ');
         await sessionManager.processMessage();
         
-        // 显示上下文使用率
-        console.log(`\n${sessionManager.formatContextStatus()}\n`);
+        // 检查是否发生了压缩
+        const lastCompressionResult = sessionManager.getLastCompressionResult();
+        
+        // 显示上下文使用率（如果是压缩后，添加压缩指示器）
+        console.log(`\n${sessionManager.formatContextStatus(!!lastCompressionResult?.compressed)}\n`);
+        
+        // 如果刚刚进行了压缩，显示详细信息
+        if (lastCompressionResult?.compressed) {
+          console.log(`📦 Context compressed: ${lastCompressionResult.message}\n`);
+        }
       } catch (error: any) {
         console.error(`\nError: ${error.message}\n`);
       }

@@ -13,11 +13,29 @@ export function loadConfig(): Config {
     throw new Error('GLM_API_KEY not found. Please set it in .env file');
   }
   
+  // 默认压缩配置
+  const compressionEnabled = process.env.COMPRESSION_ENABLED === 'true';
+  const compressionThreshold = parseInt(process.env.COMPRESSION_THRESHOLD || '75');
+  const compressionStrategy = process.env.COMPRESSION_STRATEGY || 'summary';
+  const preserveToolHistory = process.env.PRESERVE_TOOL_HISTORY !== 'false';
+  const preserveRecentMessages = parseInt(process.env.PRESERVE_RECENT_MESSAGES || '10');
+  const notifyBeforeCompression = process.env.NOTIFY_BEFORE_COMPRESSION !== 'false';
+  
+  const compression = compressionEnabled ? {
+    enabled: true,
+    threshold: compressionThreshold,
+    strategy: compressionStrategy as 'summary' | 'sliding-window' | 'importance',
+    preserveToolHistory,
+    preserveRecentMessages,
+    notifyBeforeCompression,
+  } : undefined;
+  
   return {
     apiKey,
     baseUrl,
     model,
     workingDir: process.cwd(),
+    compression,
   };
 }
 

@@ -53,6 +53,29 @@ export interface Session {
   messages: Message[];
   createdAt: number;
   updatedAt: number;
+  lastCompression?: CompressionResult;
+}
+
+// 压缩配置
+export interface CompressionConfig {
+  enabled: boolean;
+  threshold: number; // 触发压缩的百分比阈值 (默认 75%)
+  strategy: 'summary' | 'sliding-window' | 'importance';
+  preserveToolHistory: boolean;
+  preserveRecentMessages: number; // 保留最近的消息数量
+  notifyBeforeCompression: boolean;
+}
+
+// 压缩结果
+export interface CompressionResult {
+  compressed: boolean;
+  strategy: string;
+  originalTokenCount: number;
+  compressedTokenCount: number;
+  reductionPercentage: number;
+  summary?: string;
+  message: string;
+  compressedMessages?: Message[];
 }
 
 // 配置
@@ -61,4 +84,5 @@ export interface Config {
   baseUrl: string;
   model: string;
   workingDir: string;
+  compression?: CompressionConfig;
 }
