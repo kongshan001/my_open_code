@@ -1,0 +1,21 @@
+{
+  "performance": {
+    "tokenThresholds": {
+      "small": 1000,
+      "medium": 10000,
+      "large": 50000
+    },
+    "messageCounts": {
+      "small": 10,
+      "medium": 50,
+      "large": 150
+    }
+  },
+  "compression": {
+    "expectedReductions": {
+      "summary": "70-80%",
+      "sliding-window": "80-90%",
+      "importance": "60-70%"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "conversations": {
+    "small": [
+      { "role": "user", "content": "Hello", "id": "1" },
+      { "role": "assistant", "content": "Hi there!", "id": "2" }
+    ],
+    "medium": [
+      { "role": "user", "content": "Implement a sorting function", "id": "1" },
+      { "role": "assistant", "content": "Here's how to implement a sort function:", "id": "2" }
+    ],
+    "large": [
+      { "role": "user", "content": "Help with complex data processing", "id": "1" },
+      { "role": "assistant", "content": "I'll help you with data processing", "id": "2" }
+    ]
+  },
+  "compressionData": {
+    "thresholds": [25, 50, 75],
+    "strategies": ["summary", "sliding-window", "importance"],
+    "testModels": ["glm-4.7", "tiny-test-model"]
+  }
+}
