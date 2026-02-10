@@ -1,0 +1,51 @@
+{
+  "name": "hello_world_opencode",
+  "version": "0.1.0",
+  "description": "Minimal OpenCode implementation with GLM-4.7",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "npm run build && node dist/index.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:performance": "vitest run tests/performance",
+    "test:coverage": "vitest run --coverage",
+    "test:compression": "vitest run tests/compression",
+    "test:watch": "vitest --watch",
+    "test:ui": "vitest --ui",
+    "test:debug": "vitest run --inspect-brk",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "glm",
+    "opencode"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/openai": "^0.0.70",
+    "ai": "^3.4.0",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vitest/coverage-v8": "^1.6.1",
+    "@vitest/ui": "^1.6.1",
+    "eslint": "^8.57.1",
+    "jsdom": "^24.1.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3",
+    "vitest": "^1.6.1"
+  }
+}
