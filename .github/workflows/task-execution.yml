@@ -1,0 +1,228 @@
+name: Task Execution Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: 'Task ID to execute'
+        required: true
+        type: string
+      task_definition:
+        description: 'Task definition (JSON)'
+        required: true
+        type: string
+      execution_id:
+        description: 'Execution ID (optional, will be generated if not provided)'
+        required: false
+        type: string
+      github_token:
+        description: 'GitHub token for API access'
+        required: true
+        type: string
+      repository:
+        description: 'Repository in format owner/repo'
+        required: true
+        type: string
+
+jobs:
+  execute-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ inputs.github_token }}
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Parse task definition
+        id: parse-task
+        run: |
+          TASK_DEF='${{ inputs.task_definition }}'
+          TASK_ID='${{ inputs.task_id }}'
+          EXEC_ID='${{ inputs.execution_id }}'
+          
+          echo "task_definition=$TASK_DEF" >> $GITHUB_OUTPUT
+          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+          echo "execution_id=${EXEC_ID:-exec-$(date +%s)-$(uuidgen | tr -d '-')}" >> $GITHUB_OUTPUT
+
+      - name: Initialize task execution
+        id: init-execution
+        env:
+          TASK_DEF: ${{ steps.parse-task.outputs.task_definition }}
+          TASK_ID: ${{ steps.parse-task.outputs.task_id }}
+          EXEC_ID: ${{ steps.parse-task.outputs.execution_id }}
+          GH_TOKEN: ${{ inputs.github_token }}
+          REPO: ${{ inputs.repository }}
+        run: |
+          # Create execution record
+          mkdir -p data/executions
+          
+          EXECUTION_DATA=$(cat << EOF
+          {
+            "id": "$EXEC_ID",
+            "taskId": "$TASK_ID",
+            "status": "running",
+            "startTime": $(date +%s)000,
+            "output": "",
+            "progress": 0,
+            "retryCount": 0,
+            "metadata": {
+              "runId": "${{ github.run_id }}",
+              "runNumber": "${{ github.run_number }}"
+            }
+          }
+          EOF
+          )
+          
+          echo "$EXECUTION_DATA" > "data/executions/$EXEC_ID.json"
+          
+          # Update status file for monitoring
+          mkdir -p data/status
+          echo '{"executionId":"'$EXEC_ID'","status":"running","progress":0,"timestamp":'$(date +%s)000'}' > "data/status/$EXEC_ID.json"
+          
+          echo "execution_id=$EXEC_ID" >> $GITHUB_OUTPUT
+
+      - name: Execute task
+        id: execute
+        env:
+          EXEC_ID: ${{ steps.init-execution.outputs.execution_id }}
+          TASK_DEF: ${{ inputs.task_definition }}
+        run: |
+          # Execute task based on type
+          echo "$TASK_DEF" > /tmp/task.json
+          
+          # Build and run the task executor
+          npm run build
+          
+          # Create temporary execution script
+          cat > /tmp/execute-task.js << 'SCRIPT_EOF'
+          import { TaskExecutor } from './dist/task-executor.js';
+          import fs from 'fs';
+          
+          const task = JSON.parse(process.env.TASK_DEF);
+          const executor = new TaskExecutor();
+          
+          // Stream output
+          const originalLog = console.log;
+          let output = '';
+          
+          console.log = (...args) => {
+            output += args.join(' ') + '\n';
+            originalLog(...args);
+          };
+          
+          executor.execute(task).then(execution => {
+            // Save execution result
+            fs.writeFileSync(`data/executions/${execution.id}.json`, JSON.stringify(execution, null, 2));
+            
+            // Update status
+            fs.writeFileSync(
+              `data/status/${execution.id}.json`,
+              JSON.stringify({
+                executionId: execution.id,
+                status: execution.status,
+                progress: execution.progress,
+                output: execution.output.substring(0, 1000),
+                error: execution.error,
+                timestamp: Date.now()
+              })
+            );
+            
+            console.log('\\n✓ Task execution completed');
+            console.log(`Status: ${execution.status}`);
+            console.log(`Duration: ${execution.duration}ms`);
+            
+            if (!execution.validation?.passed) {
+              console.log('⚠️  Validation failed');
+              process.exit(1);
+            }
+            
+            process.exit(0);
+          }).catch(error => {
+            console.error('Task execution failed:', error);
+            process.exit(1);
+          });
+          SCRIPT_EOF
+          
+          node /tmp/execute-task.js
+
+      - name: Update task status
+        if: always()
+        env:
+          EXEC_ID: ${{ steps.init-execution.outputs.execution_id }}
+          EXECUTION_OUTCOME: ${{ job.status }}
+        run: |
+          STATUS_FILE="data/executions/$EXEC_ID.json"
+          
+          if [ -f "$STATUS_FILE" ]; then
+            # Update final status
+            STATUS="failed"
+            if [ "$EXECUTION_OUTCOME" = "success" ]; then
+              STATUS="completed"
+            fi
+            
+            # Update status file
+            jq --arg status "$STATUS" --arg end_time "$(date +%s)000" \
+              '.status = $status | .endTime = ($end_time | tonumber) | .duration = (.endTime - .startTime)' \
+              "$STATUS_FILE" > tmp.json && mv tmp.json "$STATUS_FILE"
+          fi
+
+      - name: Commit execution results
+        if: always()
+        env:
+          EXEC_ID: ${{ steps.init-execution.outputs.execution_id }}
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add execution data
+          git add data/executions/$EXEC_ID.json data/status/$EXEC_ID.json || true
+          
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Task execution: $EXEC_ID
+
+Task ID: ${{ inputs.task_id }}
+Status: ${{ job.status }}
+Run ID: ${{ github.run_id }}"
+            git push
+          fi
+
+      - name: Upload execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-${{ steps.init-execution.outputs.execution_id }}
+          path: |
+            data/executions/${{ steps.init-execution.outputs.execution_id }}.json
+            data/status/${{ steps.init-execution.outputs.execution_id }}.json
+          retention-days: 7
+
+      - name: Notify completion
+        if: always()
+        env:
+          EXEC_ID: ${{ steps.init-execution.outputs.execution_id }}
+          STATUS: ${{ job.status }}
+        run: |
+          echo "Execution $EXEC_ID completed with status: $STATUS"
+          
+          if [ "$STATUS" = "success" ]; then
+            echo "✅ Task executed successfully"
+          else
+            echo "❌ Task execution failed"
+            exit 1
+          fi

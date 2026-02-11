@@ -1,0 +1,154 @@
+name: Git Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Git action to perform'
+        required: true
+        type: choice
+        options:
+          - commit
+          - create_branch
+          - switch_branch
+          - get_commits
+          - get_diff
+      branch_name:
+        description: 'Branch name (for create_branch and switch_branch)'
+        required: false
+        type: string
+      commit_message:
+        description: 'Commit message (for commit action)'
+        required: false
+        type: string
+      files:
+        description: 'Files to commit (comma-separated, leave empty for all)'
+        required: false
+        type: string
+      github_token:
+        description: 'GitHub token for API access'
+        required: true
+        type: string
+      repository:
+        description: 'Repository in format owner/repo'
+        required: true
+        type: string
+
+jobs:
+  git-operation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ inputs.github_token }}
+          fetch-depth: 0
+
+      - name: Create branch
+        if: inputs.action == 'create_branch'
+        env:
+          BRANCH: ${{ inputs.branch_name }}
+        run: |
+          if [ -z "$BRANCH" ]; then
+            echo "Branch name is required"
+            exit 1
+          fi
+          
+          git checkout -b "$BRANCH"
+          git push -u origin "$BRANCH"
+          echo "Branch created: $BRANCH"
+
+      - name: Switch branch
+        if: inputs.action == 'switch_branch'
+        env:
+          BRANCH: ${{ inputs.branch_name }}
+        run: |
+          if [ -z "$BRANCH" ]; then
+            echo "Branch name is required"
+            exit 1
+          fi
+          
+          git fetch origin
+          git checkout "$BRANCH"
+          echo "Switched to branch: $BRANCH"
+
+      - name: Get commits
+        if: inputs.action == 'get_commits'
+        run: |
+          COMMITS=$(git log -20 --pretty=format:'{"hash":"%H","author":"%an","date":"%ad","message":"%s"},')
+          echo "[${COMMITS%,}]"
+
+      - name: Get diff
+        if: inputs.action == 'get_diff'
+        run: |
+          git diff --stat
+          echo "---"
+          git diff
+
+      - name: Commit changes
+        if: inputs.action == 'commit'
+        env:
+          MESSAGE: ${{ inputs.commit_message }}
+          FILES: ${{ inputs.files }}
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if [ -z "$MESSAGE" ]; then
+            MESSAGE="Automated commit via workflow"
+          fi
+          
+          if [ -z "$FILES" ]; then
+            git add -A
+          else
+            IFS=',' read -ra FILE_ARRAY <<< "$FILES"
+            for file in "${FILE_ARRAY[@]}"; do
+              git add "$file"
+            done
+          fi
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo '{"status":"no_changes"}'
+          else
+            COMMIT_HASH=$(git commit -m "$MESSAGE")
+            PUSH_OUTPUT=$(git push)
+            
+            echo '{"status":"success","commit_hash":"'"$(git rev-parse HEAD)"'","message":"'"$MESSAGE"'"}'
+            
+            echo "✓ Changes committed and pushed"
+          fi
+
+      - name: Create task execution branch
+        if: inputs.action == 'create_branch' && contains(inputs.branch_name, 'task-')
+        env:
+          BRANCH: ${{ inputs.branch_name }}
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          # Create a dedicated branch for task execution
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Create task data directory
+          mkdir -p data/executions data/tasks data/workspace
+          
+          git add data/
+          git commit -m "Initialize task execution data directory" || true
+          git push origin "$BRANCH"
+          
+          echo "Task execution branch ready: $BRANCH"
+
+      - name: Sync task data
+        if: always() && (inputs.action == 'commit' || inputs.action == 'create_branch')
+        env:
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          # Ensure task data directories exist
+          mkdir -p data/executions data/tasks data/workspace data/status
+          
+          git add data/
+          git commit -m "Sync task data" || true
+          git push || true

@@ -1,0 +1,98 @@
+name: Status Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - get_status
+          - get_execution
+          - list_tasks
+          - get_workspace
+      execution_id:
+        description: 'Execution ID (for get_status and get_execution)'
+        required: false
+        type: string
+      github_token:
+        description: 'GitHub token for API access'
+        required: true
+        type: string
+      repository:
+        description: 'Repository in format owner/repo'
+        required: true
+        type: string
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ inputs.github_token }}
+          ref: main
+
+      - name: Get execution status
+        if: inputs.action == 'get_status'
+        env:
+          EXEC_ID: ${{ inputs.execution_id }}
+        run: |
+          STATUS_FILE="data/status/$EXEC_ID.json"
+          
+          if [ -f "$STATUS_FILE" ]; then
+            cat "$STATUS_FILE"
+          else
+            echo '{"error":"Execution not found"}'
+          fi
+
+      - name: Get execution details
+        if: inputs.action == 'get_execution'
+        env:
+          EXEC_ID: ${{ inputs.execution_id }}
+        run: |
+          EXEC_FILE="data/executions/$EXEC_ID.json"
+          
+          if [ -f "$EXEC_FILE" ]; then
+            cat "$EXEC_FILE"
+          else
+            echo '{"error":"Execution not found"}'
+          fi
+
+      - name: List tasks
+        if: inputs.action == 'list_tasks'
+        run: |
+          if [ -d "data/tasks" ]; then
+            echo '['
+            first=true
+            for file in data/tasks/*.json; do
+              if [ -f "$file" ]; then
+                if [ "$first" = false ]; then
+                  echo ','
+                fi
+                cat "$file"
+                first=false
+              fi
+            done
+            echo ']'
+          else
+            echo '[]'
+          fi
+
+      - name: Get workspace state
+        if: inputs.action == 'get_workspace'
+        run: |
+          if [ -f "data/workspace/state.json" ]; then
+            cat "data/workspace/state.json"
+          else
+            echo '{"branch":"main","files":[],"lastSync":0,"pendingChanges":[]}'
+          fi
+
+      - name: Set output
+        id: output
+        run: |
+          echo "timestamp=$(date +%s)000" >> $GITHUB_OUTPUT

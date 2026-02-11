@@ -1,0 +1,188 @@
+name: File Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'File operation type'
+        required: true
+        type: choice
+        options:
+          - list
+          - read
+          - write
+          - delete
+          - create_dir
+          - move
+          - upload
+      path:
+        description: 'File path (relative to repository root)'
+        required: false
+        type: string
+      content:
+        description: 'File content (for write operation)'
+        required: false
+        type: string
+      target_path:
+        description: 'Target path (for move operation)'
+        required: false
+        type: string
+      recursive:
+        description: 'Recursive listing'
+        required: false
+        type: boolean
+        default: false
+      github_token:
+        description: 'GitHub token for API access'
+        required: true
+        type: string
+      repository:
+        description: 'Repository in format owner/repo'
+        required: true
+        type: string
+
+jobs:
+  file-operation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ inputs.github_token }}
+          ref: main
+
+      - name: List files
+        if: inputs.operation == 'list'
+        env:
+          PATH: ${{ inputs.path }}
+          RECURSIVE: ${{ inputs.recursive }}
+        run: |
+          TARGET_PATH="${PATH:-.}"
+          
+          if [ "$RECURSIVE" = "true" ]; then
+            find "$TARGET_PATH" -type f -o -type d | head -n 1000
+          else
+            ls -la "$TARGET_PATH" 2>/dev/null || echo "Path not found"
+          fi
+
+      - name: Read file
+        if: inputs.operation == 'read'
+        env:
+          PATH: ${{ inputs.path }}
+        run: |
+          if [ -f "$PATH" ]; then
+            cat "$PATH"
+          else
+            echo "File not found: $PATH"
+            exit 1
+          fi
+
+      - name: Write file
+        if: inputs.operation == 'write'
+        env:
+          PATH: ${{ inputs.path }}
+          CONTENT: ${{ inputs.content }}
+        run: |
+          mkdir -p "$(dirname "$PATH")"
+          echo "$CONTENT" > "$PATH"
+          echo "File written: $PATH"
+
+      - name: Delete file
+        if: inputs.operation == 'delete'
+        env:
+          PATH: ${{ inputs.path }}
+        run: |
+          if [ -e "$PATH" ]; then
+            rm -rf "$PATH"
+            echo "Deleted: $PATH"
+          else
+            echo "Path not found: $PATH"
+            exit 1
+          fi
+
+      - name: Create directory
+        if: inputs.operation == 'create_dir'
+        env:
+          PATH: ${{ inputs.path }}
+        run: |
+          mkdir -p "$PATH"
+          echo "Directory created: $PATH"
+
+      - name: Move file/directory
+        if: inputs.operation == 'move'
+        env:
+          SOURCE: ${{ inputs.path }}
+          TARGET: ${{ inputs.target_path }}
+        run: |
+          if [ -e "$SOURCE" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            mv "$SOURCE" "$TARGET"
+            echo "Moved: $SOURCE -> $TARGET"
+          else
+            echo "Source not found: $SOURCE"
+            exit 1
+          fi
+
+      - name: Upload file (artifact)
+        if: inputs.operation == 'upload'
+        env:
+          PATH: ${{ inputs.path }}
+        run: |
+          if [ -f "$PATH" ]; then
+            echo "File ready for upload: $PATH"
+            ls -lh "$PATH"
+          else
+            echo "File not found: $PATH"
+            exit 1
+          fi
+
+      - name: Commit changes
+        if: inputs.operation == 'write' || inputs.operation == 'delete' || inputs.operation == 'create_dir' || inputs.operation == 'move'
+        env:
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add -A
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "File operation: ${{ inputs.operation }} on ${{ inputs.path }}" || true
+            git push || echo "No changes to push"
+          fi
+
+      - name: Update workspace state
+        if: always()
+        run: |
+          mkdir -p data/workspace
+          
+          BRANCH="${{ github.ref_name }}"
+          FILES=$(git ls-files | head -n 100 | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          LAST_SYNC=$(date +%s)000
+          
+          cat > data/workspace/state.json << EOF
+          {
+            "branch": "$BRANCH",
+            "files": $FILES,
+            "lastSync": $LAST_SYNC,
+            "pendingChanges": []
+          }
+          EOF
+          
+          echo "Workspace state updated"
+
+      - name: Commit workspace state
+        if: always()
+        env:
+          GH_TOKEN: ${{ inputs.github_token }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add data/workspace/state.json
+          git commit -m "Update workspace state" || true
+          git push || true

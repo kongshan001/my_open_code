@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "build:web": "echo 'Web files are static and ready for deployment'",
     "start": "npm run build && node dist/index.js",
+    "serve:web": "npx http-server web -p 8080 -o",
     "test": "vitest",
     "test:run": "vitest run",
     "test:unit": "vitest run tests/unit",
