@@ -78,6 +78,15 @@ export interface CompressionResult {
   compressedMessages?: Message[];
 }
 
+// Rate Limit配置
+export interface RateLimitConfig {
+  enabled: boolean;
+  maxRequestsPerHour: number; // 每小时最大请求数
+  maxRequestsPerMinute: number; // 每分钟最大请求数
+  maxConcurrentRequests: number; // 最大并发请求数
+  queueInterval: number; // 队列处理间隔（毫秒）
+}
+
 // 配置
 export interface Config {
   apiKey: string;
@@ -85,4 +94,5 @@ export interface Config {
   model: string;
   workingDir: string;
   compression?: CompressionConfig;
+  rateLimit?: RateLimitConfig;
 }

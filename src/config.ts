@@ -29,13 +29,29 @@ export function loadConfig(): Config {
     preserveRecentMessages,
     notifyBeforeCompression,
   } : undefined;
-  
+
+  // Rate Limit配置
+  const rateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false'; // 默认启用
+  const maxRequestsPerHour = parseInt(process.env.RATE_LIMIT_MAX_PER_HOUR || '100');
+  const maxRequestsPerMinute = parseInt(process.env.RATE_LIMIT_MAX_PER_MINUTE || '10');
+  const maxConcurrentRequests = parseInt(process.env.RATE_LIMIT_MAX_CONCURRENT || '5');
+  const rateLimitQueueInterval = parseInt(process.env.RATE_LIMIT_QUEUE_INTERVAL || '1000');
+
+  const rateLimit = rateLimitEnabled ? {
+    enabled: true,
+    maxRequestsPerHour,
+    maxRequestsPerMinute,
+    maxConcurrentRequests,
+    queueInterval: rateLimitQueueInterval,
+  } : undefined;
+
   return {
     apiKey,
     baseUrl,
     model,
     workingDir: process.cwd(),
     compression,
+    rateLimit,
   };
 }
 
