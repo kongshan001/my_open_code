@@ -1,5 +1,7 @@
 import { Tool, ToolContext, ToolExecuteResult } from './types.js';
 
+export { Tool, ToolContext, ToolExecuteResult } from './types.js';
+
 // 工具注册表
 const toolRegistry = new Map<string, Tool>();
 

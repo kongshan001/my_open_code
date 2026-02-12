@@ -52,6 +52,9 @@ export interface CustomConfig {
   function: string;
   parameters: Record<string, any>;
   dependencies?: string[];
+  continueOnError?: boolean;
+  taskType?: string;
+  opsType?: string;
 }
 
 export interface CronSchedule {
